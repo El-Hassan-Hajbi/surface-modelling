@@ -36,6 +36,10 @@ def test3():
     B = tr.triangulate(A, 'qa0.05')
     tr.compare(plt, A, B)
     plt.show()
+
+def mesh(points, contour, option):
+    return tr.triangulate({'vertices': points, 'segments': contour}, opts=option)
+
 if __name__ == "__main__":
  
     test1()

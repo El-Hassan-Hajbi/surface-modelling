@@ -1,12 +1,32 @@
 import tkinter as tk
-import triangle as tr
+from maillage import mesh
 
+def replace_element(my_list, element_to_delete, new_element):
+    try:
+        # Find the index of the element to delete
+        index_to_delete = my_list.index(element_to_delete)
+        
+        # Replace the element at that index with the new element
+        my_list[index_to_delete] = new_element
+
+        # Optionally, you can remove the old element from the list
+        # my_list.remove(element_to_delete)
+
+        return True  # Indicate success
+    except ValueError:
+        # The element to delete was not found in the list
+        return False
+    
 class Application:
     def __init__(self, master, filename):
         self.master = master
         self.master.title("Interface Graphique 2D")
         
         self.filename = filename
+
+        self.mesh_precision = 'qa1000'
+
+        self.selection_precision = 2
 
         self.canvas = tk.Canvas(self.master, width=500, height=500, bg="white")
         self.canvas.pack(expand=tk.YES, fill=tk.BOTH)
@@ -36,6 +56,9 @@ class Application:
         # Ajouter un bouton pour changer le mode
         mesh_button = tk.Button(self.master, text=" Triangular Mesh", command=self.visualize_mesh)
         mesh_button.pack()
+
+        self.selected_point = None
+
     def draw_contour(self, event):
         if self.current_mode == "draw":
             x, y = event.x, event.y
@@ -49,6 +72,8 @@ class Application:
 
     def handle_click(self, event):
         #print("handle click",event.x, event.y)
+        #print("selected point", self.get_selected_point(event.x, event.y))
+        self.selected_point = self.get_selected_point(event.x, event.y)
         if self.current_mode == "select":
             # Find the selected point in select mode
             size = 5
@@ -57,19 +82,16 @@ class Application:
 
     def handle_release(self, event):
         #print("handle release",event.x, event.y)
+        new_point = (event.x, event.y)
         if self.current_mode == "move":
+            self.canvas.delete("all") # clean the drawing
+            replace_element(self.points, self.selected_point, new_point)# update the points (delete + insert)
+            self.draw_polyline(self.points) # draw new set of points 
             # Clear the selected point after releasing the mouse button
             size = 5
             self.canvas.create_oval(event.x-size, event.y-size, event.x+size, event.y+size, fill="green")
             self.handles.append((event.x, event.y))
 
-    def move_selected_point(self, x, y):
-        if hasattr(self, 'selected_point') and self.selected_point is not None:
-            dx = x - self.drag_data["x"]
-            dy = y - self.drag_data["y"]
-            self.canvas.move(self.selected_point, dx, dy)
-            self.drag_data["x"] = x
-            self.drag_data["y"] = y
 
     def toggle_mode(self):
         # Toggle between draw and select modes
@@ -94,29 +116,28 @@ class Application:
         if filename:
             with open(filename, "r") as file:
                 polyline_points = [tuple(map(float, line.strip().split(','))) for line in file]
-                self.points.append(polyline_points)
-            self.draw_polyline(polyline_points)
+                self.points = polyline_points
+            self.draw_polyline(self.points)
 
     def draw_polyline(self, points):
         # Dessiner la polyligne sur le canevas
         for point in points:
             x, y = point
-            if point in self.points:
-                self.canvas.create_oval(x-2, y-2, x+2, y+2, fill="green")
-            else:
-                self.canvas.create_oval(x-2, y-2, x+2, y+2, fill="red")
-
+            self.canvas.create_oval(x-2, y-2, x+2, y+2, fill="red")
         self.canvas.create_line(points, points[0], fill="blue")
 
     def get_selected_point(self, x, y):
         # Retourne l'ID du point si (x, y) est à proximité d'un point, sinon retourne None
-        for point_id in self.points:
-            point_id = point_id[0]
-            #point_coords = self.canvas.coords(point_id)
-            dist = self.point_distance(x, y, point_id[0], point_id[1])
-            if dist < 5:  # Ajustez la tolérance selon vos besoins
-                return point_id
-        return None
+        closest_point = None
+        min_distance = float('inf')  # Initialize with positive infinity
+
+        for point in self.points:
+            dist = self.point_distance(x, y, point[0], point[1])
+            if dist < min_distance:
+                min_distance = dist
+                closest_point = point
+
+        return closest_point
 
     def point_distance(self, x1, y1, x2, y2):
         return ((x1 - x2)**2 + (y1 - y2)**2)**0.5
@@ -128,7 +149,7 @@ class Application:
         segments = [(i, i+1) for i in range(len(polyline_points)-1)] + [(len(polyline_points)-1, 0)]
 
         # Triangulate
-        B = tr.triangulate({'vertices': polyline_points, 'segments': segments}, opts='qa100000')
+        B = mesh(polyline_points, segments, self.mesh_precision)
 
         # Draw the triangular mesh on the canvas
         for triangle in B['triangles']:
