@@ -1,12 +1,14 @@
 import tkinter as tk
 from maillage import mesh
-
+import numpy as np
+from utils import convert_coordinates_tkinter_to_matplotlib
+from deformation import laplacian_surface_editing
 def replace_element(my_list, element_to_delete, new_element):
     try:
         # Find the index of the element to delete
-        index_to_delete = my_list.index(element_to_delete)
-        
-        # Replace the element at that index with the new element
+        index_to_delete = np.where((my_list[:, 0] == element_to_delete[0]) & (my_list[:, 1] == element_to_delete[1]))[0]
+
+        # Replace the element at the found index with the new element
         my_list[index_to_delete] = new_element
 
         # Optionally, you can remove the old element from the list
@@ -24,7 +26,7 @@ class Application:
         
         self.filename = filename
 
-        self.mesh_precision = 'qa1000'
+        self.mesh_precision = 'qpa400'
 
         self.selection_precision = 2
 
@@ -36,7 +38,7 @@ class Application:
         self.canvas.bind("<ButtonRelease-1>", self.handle_release)
         
         self.points = []
-        self.fixe_edges = []
+        self.fixe_edges = np.array([])
         self.handles = []
         self.current_mode = "draw"  # Initial mode is drawing
 
@@ -57,7 +59,20 @@ class Application:
         mesh_button = tk.Button(self.master, text=" Triangular Mesh", command=self.visualize_mesh)
         mesh_button.pack()
 
+        # Ajouter un bouton pour nettoyer la fenetre
+        clear_button = tk.Button(self.master, text="Clear", command=self.clear)
+        clear_button.pack()
+
+        # Ajouter un bouton pour deformation
+        deformation_button = tk.Button(self.master, text="Deformation", command=self.deformation)
+        deformation_button.pack()
+
         self.selected_point = None
+        self.triangles = None
+        self.vertices = None
+
+    def clear(self):
+        self.canvas.delete("all") # clean the drawing
 
     def draw_contour(self, event):
         if self.current_mode == "draw":
@@ -74,23 +89,28 @@ class Application:
         #print("handle click",event.x, event.y)
         #print("selected point", self.get_selected_point(event.x, event.y))
         self.selected_point = self.get_selected_point(event.x, event.y)
+        #print(self.selected_point)
         if self.current_mode == "select":
             # Find the selected point in select mode
             size = 5
             self.canvas.create_oval(event.x-size, event.y-size, event.x+size, event.y+size, fill="black")
-            self.fixe_edges.append((event.x, event.y))
+            self.fixe_edges = np.append(self.fixe_edges, np.array(self.selected_point))
+            # Reshape the array to have two columns
+            self.fixe_edges = self.fixe_edges.reshape(-1, 2)
+            #print(self.fixe_edges)
 
     def handle_release(self, event):
         #print("handle release",event.x, event.y)
-        new_point = (event.x, event.y)
+        new_point = [event.x, event.y]
         if self.current_mode == "move":
             self.canvas.delete("all") # clean the drawing
             replace_element(self.points, self.selected_point, new_point)# update the points (delete + insert)
             self.draw_polyline(self.points) # draw new set of points 
+            self.visualize_mesh()
             # Clear the selected point after releasing the mouse button
             size = 5
             self.canvas.create_oval(event.x-size, event.y-size, event.x+size, event.y+size, fill="green")
-            self.handles.append((event.x, event.y))
+            self.handles.append([event.x, event.y])
 
 
     def toggle_mode(self):
@@ -105,26 +125,38 @@ class Application:
     def save_coordinates(self):
         with open(self.filename, "w") as file:
             for point in self.points:
-                file.write(f"{point[0]}, {point[1]}\n")
+                file.write(f"{point[0]}  {point[1]}\n")
 
         # Fermer la fenêtre
         self.master.destroy()
 
-    def load_polyline(self):
+    def load_polyline(self, type='tkinter'):
         filename = self.filename
-        self.points = []
-        if filename:
-            with open(filename, "r") as file:
-                polyline_points = [tuple(map(float, line.strip().split(','))) for line in file]
-                self.points = polyline_points
-            self.draw_polyline(self.points)
+        if type == "tkinter":
+            self.points = []
+            if filename:
+                #with open(filename, "r") as file:
+                 #   polyline_points = [tuple(map(float, line.strip().split(','))) for line in file]
+                polyline_points = np.loadtxt(filename)
+        else : 
+            polyline_points = np.loadtxt(filename)
+            point_ = []
+            for i, point in enumerate(polyline_points):
+                x, y = point
+                point_.append((100*x, 100*y)) 
+            polyline_points = point_
+            polyline_points = convert_coordinates_tkinter_to_matplotlib(polyline_points, 30)
+        
+        self.points = polyline_points
+        self.draw_polyline(self.points)
 
     def draw_polyline(self, points):
         # Dessiner la polyligne sur le canevas
         for point in points:
             x, y = point
             self.canvas.create_oval(x-2, y-2, x+2, y+2, fill="red")
-        self.canvas.create_line(points, points[0], fill="blue")
+        coord_tuple = [(x,y) for x, y in self.points]
+        self.canvas.create_line(coord_tuple, coord_tuple[0], fill="blue")
 
     def get_selected_point(self, x, y):
         # Retourne l'ID du point si (x, y) est à proximité d'un point, sinon retourne None
@@ -144,21 +176,42 @@ class Application:
     
     def visualize_mesh(self):
         # Load polyline points and segments from the file
-        with open(self.filename, "r") as file:
-            polyline_points = [tuple(map(float, line.strip().split(','))) for line in file]
-        segments = [(i, i+1) for i in range(len(polyline_points)-1)] + [(len(polyline_points)-1, 0)]
-
+        
+        i = np.arange(len(self.points))
+        segments = np.stack([i, i + 1], axis=1) % len(self.points)        
         # Triangulate
-        B = mesh(polyline_points, segments, self.mesh_precision)
-
+        B = mesh(self.points, segments, self.mesh_precision)
+        triangles = B['triangles']
+  
         # Draw the triangular mesh on the canvas
-        for triangle in B['triangles']:
-            for i in range(3):
-                x1, y1 = polyline_points[triangle[i % 3]% len(polyline_points)]
-                x2, y2 = polyline_points[triangle[(i + 1) % 3]% len(polyline_points)]
-                self.canvas.create_line(x1, y1, x2, y2, fill="blue")
+        for t in triangles:
+        
+            V = B['vertices']
 
+            self.canvas.create_line(V[t[0]][0],V[t[0]][1], V[t[1]][0],V[t[1]][1], fill="blue")
+            self.canvas.create_line(V[t[1]][0],V[t[1]][1], V[t[2]][0],V[t[2]][1], fill="blue")
+            self.canvas.create_line(V[t[2]][0],V[t[2]][1], V[t[0]][0],V[t[0]][1], fill="blue")
+            
+        self.vertices, self.triangles = V, triangles
+        #print(len(self.vertices))
+
+    def deformation(self):
+
+        V = laplacian_surface_editing(self.vertices, self.triangles, self.fixe_edges)
+        print(V)
+        #V = self.vertices
+        self.canvas.delete("all") # clean the drawing
+
+
+        for t in self.triangles:
+
+            self.canvas.create_line(V[t[0]][0],V[t[0]][1], V[t[1]][0],V[t[1]][1], fill="blue")
+            self.canvas.create_line(V[t[1]][0],V[t[1]][1], V[t[2]][0],V[t[2]][1], fill="blue")
+            self.canvas.create_line(V[t[2]][0],V[t[2]][1], V[t[0]][0],V[t[0]][1], fill="blue")
+
+        
 if __name__ == "__main__":
     root = tk.Tk()
-    app = Application(root, "coordinates.txt")
+    app = Application(root, "img.txt")
+    #print(app.canvas.winfo_reqheight())
     root.mainloop()
